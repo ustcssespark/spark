@@ -54,5 +54,8 @@ public enum SaveMode {
    *
    * @since 1.3.0
    */
-  Ignore
+  Ignore,
+  Delete,
+  Update,
+  Upsert
 }
