@@ -83,6 +83,9 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
    */
   def mode(saveMode: String): DataFrameWriter[T] = {
     saveMode.toLowerCase(Locale.ROOT) match {
+      case "update" => mode(SaveMode.Update)
+      case "delete" => mode(SaveMode.Delete)
+      case "upsert" => mode(SaveMode.Upsert)
       case "overwrite" => mode(SaveMode.Overwrite)
       case "append" => mode(SaveMode.Append)
       case "ignore" => mode(SaveMode.Ignore)

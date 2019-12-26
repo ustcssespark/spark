@@ -953,33 +953,9 @@ object JdbcUtils extends Logging {
     val batchSize = options.batchSize
     val isolationLevel = options.isolationLevel
 
-    var insertStmt = "";
     mode match {
       case SaveMode.Overwrite =>
-        insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-      case SaveMode.Ignore =>
-        insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-      case SaveMode.Append =>
-        insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-      case SaveMode.Delete =>
-        insertStmt = getDeleteStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-      case SaveMode.Update =>
-        insertStmt = getUpdateStatement(
-          table,
-          rddSchema,
-          Seq(),
-          tableSchema,
-          isCaseSensitive,
-          dialect)
-      case SaveMode.Upsert =>
-        insertStmt = getMergeStatement(
-          table,
-          rddSchema,
-          Seq(),
-          tableSchema,
-          isCaseSensitive,
-          dialect)
-      case _ =>
+        val insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
         val repartitionedDF = options.numPartitions match {
           case Some(n) if n <= 0 => throw new IllegalArgumentException(
             s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
@@ -991,6 +967,73 @@ object JdbcUtils extends Logging {
           getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
           options)
         }
+      case SaveMode.Ignore =>
+        val insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
+        val repartitionedDF = options.numPartitions match {
+          case Some(n) if n <= 0 => throw new IllegalArgumentException(
+            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
+              s"in table writing via JDBC. The minimum value is 1.")
+          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
+          case _ => df
+        }
+        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
+          getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
+          options)
+        }
+      case SaveMode.Append =>
+        val insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
+        val repartitionedDF = options.numPartitions match {
+          case Some(n) if n <= 0 => throw new IllegalArgumentException(
+            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
+              s"in table writing via JDBC. The minimum value is 1.")
+          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
+          case _ => df
+        }
+        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
+          getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
+          options)
+        }
+      case SaveMode.Delete =>
+        val deleteStmt = getDeleteStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
+        val repartitionedDF = options.numPartitions match {
+          case Some(n) if n <= 0 => throw new IllegalArgumentException(
+            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
+              s"in table writing via JDBC. The minimum value is 1.")
+          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
+          case _ => df
+        }
+        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
+          getConnection, table, iterator, rddSchema, deleteStmt, batchSize, dialect, isolationLevel,
+          options)
+        }
+      case SaveMode.Update =>
+        val updateStmt = getUpdateStatement(
+          table,
+          rddSchema,
+          Seq(),
+          tableSchema,
+          isCaseSensitive,
+          dialect)
+        val repartitionedDF = options.numPartitions match {
+          case Some(n) if n <= 0 => throw new IllegalArgumentException(
+            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
+              s"in table writing via JDBC. The minimum value is 1.")
+          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
+          case _ => df
+        }
+        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
+          getConnection, table, iterator, rddSchema, updateStmt, batchSize, dialect, isolationLevel,
+          options)
+        }
+      case SaveMode.Upsert =>
+        val upsertStmt = getMergeStatement(
+          table,
+          rddSchema,
+          Seq(),
+          tableSchema,
+          isCaseSensitive,
+          dialect)
+      case _ =>
     }
   }
 
