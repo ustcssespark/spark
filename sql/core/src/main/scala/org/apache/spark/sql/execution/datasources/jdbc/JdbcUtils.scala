@@ -193,45 +193,36 @@ object JdbcUtils extends Logging {
   def getUpdateStatement(
       table: String,
       rddSchema: StructType,
-      priKeys: Seq[String],
+      priKey: Option[String],
       tableSchema: Option[StructType],
       isCaseSensitive: Boolean,
       dialect: JdbcDialect): String = {
-    val fullCols = if (tableSchema.isEmpty) {
-      rddSchema.fields.map(x => dialect.quoteIdentifier(x.name))
+    if (priKey.isEmpty) {
+      throw new AnalysisException(s"""Primary key not found in table $table""")
     } else {
-      val columnNameEquality = if (isCaseSensitive) {
-        org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
+      val fullCols = if (tableSchema.isEmpty) {
+        rddSchema.fields.map(x => dialect.quoteIdentifier(x.name))
       } else {
-        org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
-      }
-      val tableColumnNames = tableSchema.get.fieldNames
-      rddSchema.fields.map { col =>
-        val normalizedName = tableColumnNames.find(f => columnNameEquality(f, col.name)).getOrElse {
-          throw new AnalysisException(s"""Column "${col.name}" not found in schema $tableSchema""")
+        val columnNameEquality = if (isCaseSensitive) {
+          org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
+        } else {
+          org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
         }
-        dialect.quoteIdentifier(normalizedName)
-      }
-    }
-    val priCols = if (tableSchema.isEmpty) {
-      priKeys.map(dialect.quoteIdentifier(_))
-    } else {
-      val columnNameEquality = if (isCaseSensitive) {
-        org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
-      } else {
-        org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
-      }
-      val tableColumnNames = tableSchema.get.fieldNames
-      priKeys.map { col =>
-        val normalizedName = tableColumnNames.find(f => columnNameEquality(f, col)).getOrElse {
-          throw new AnalysisException(s"""Column "$col" not found in schema $tableSchema""")
+        val tableColumnNames = tableSchema.get.fieldNames
+        rddSchema.fields.map { col =>
+          val normalizedName = tableColumnNames
+            .find(f => columnNameEquality(f, col.name)).getOrElse {
+            throw new AnalysisException(s"""Column "${col.name} """ +
+              s"""not found in schema $tableSchema""")
+          }
+          dialect.quoteIdentifier(normalizedName)
         }
-        dialect.quoteIdentifier(normalizedName)
       }
+      val priCol = dialect.quoteIdentifier(priKey.get)
+      val columns = (fullCols diff Seq(priCol)).map(_ + "=?").mkString(",")
+      val cnditn = priCol + "=?"
+      s"UPDATE ${table} SET $columns WHERE $cnditn"
     }
-    val columns = (fullCols diff priCols).map(_ + "=?").mkString(",")
-    val cnditns = priCols.map(_ + "=?").mkString(" AND ")
-    s"UPDATE ${table} SET $columns WHERE $cnditns"
   }
 
   /**
@@ -240,28 +231,53 @@ object JdbcUtils extends Logging {
   def getMergeStatement(
        table: String,
        rddSchema: StructType,
-       priKeys: Seq[String],
+       priKey: Option[String],
        tableSchema: Option[StructType],
        isCaseSensitive: Boolean,
        dialect: JdbcDialect): String = {
-    val fullCols = rddSchema.fields.map(x => dialect.quoteIdentifier(x.name))
-    val priCols = priKeys.map(dialect.quoteIdentifier(_))
-    val nrmCols = fullCols diff priCols
+    if (priKey.isEmpty) {
+      throw new AnalysisException(s"""Primary key not found in table $table""")
+    } else {
+      val fullCols = if (tableSchema.isEmpty) {
+        rddSchema.fields.map(x => dialect.quoteIdentifier(x.name))
+      } else {
+        val columnNameEquality = if (isCaseSensitive) {
+          org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
+        } else {
+          org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
+        }
+        val tableColumnNames = tableSchema.get.fieldNames
+        rddSchema.fields.map { col =>
+          val normalizedName = tableColumnNames
+            .find(f => columnNameEquality(f, col.name)).getOrElse {
+            throw new AnalysisException(s"""Column "${col.name}" """ +
+              s"""not found in schema $tableSchema""")
+          }
+          dialect.quoteIdentifier(normalizedName)
+        }
+      }
+      val priCol = dialect.quoteIdentifier(priKey.get)
+      val nrmCols = fullCols diff Seq(priCol)
 
-    val fullPart = fullCols.map(c => s"${dialect.quoteIdentifier("SRC")}.$c").mkString(",")
-    val priPart = priCols.map(c => s"${dialect.quoteIdentifier("TGT")}.$c=${dialect.
-      quoteIdentifier("SRC")}.$c").mkString(" AND ")
-    val nrmPart = nrmCols.map(c => s"$c=${dialect.quoteIdentifier("SRC")}.$c").mkString(",")
+      val fullPart = fullCols.map(c => s"${dialect.quoteIdentifier("SRC")}.$c").mkString(",")
+      // val priPart = priCol.map(c => s"${dialect.quoteIdentifier("TGT")}.$c=${dialect.
+      //   quoteIdentifier("SRC")}.$c").mkString(" AND ")
+      // val nrmPart = nrmCols.map(c => s"$c=${dialect.quoteIdentifier("SRC")}.$c").mkString(",")
 
-    val columns = fullCols.mkString(",")
-    val placeholders = fullCols.map(_ => "?").mkString(",")
+      val columns = fullCols.mkString(",")
+      val placeholders = fullCols.map(_ => "?").mkString(",")
+      val nrmCnditns = nrmCols.map(_ + "=?").mkString(" AND ")
 
-    s"MERGE INTO ${table} AS ${dialect.quoteIdentifier("TGT")} " +
-      s"USING TABLE(VALUES($placeholders)) " +
-      s"AS ${dialect.quoteIdentifier("SRC")}($columns) " +
-      s"ON $priPart " +
-      s"WHEN NOT MATCHED THEN INSERT ($columns) VALUES ($fullPart) " +
-      s"WHEN MATCHED THEN UPDATE SET $nrmPart"
+      // s"MERGE INTO ${table} AS ${dialect.quoteIdentifier("TGT")} " +
+      //   s"USING TABLE(VALUES($placeholders)) " +
+      //   s"AS ${dialect.quoteIdentifier("SRC")}($columns) " +
+      //   s"ON $priPart " +
+      //   s"WHEN NOT MATCHED THEN INSERT ($columns) VALUES ($fullPart) " +
+      //   s"WHEN MATCHED THEN UPDATE SET $nrmPart"
+      s"INSERT INTO $table AS ${dialect.quoteIdentifier("TGT")} " +
+        s" ($columns) VALUES ($placeholders) ON CONFLICT (${priCol}) " +
+        s" DO UPDATE SET ${nrmCnditns}"
+    }
   }
 
 
@@ -380,6 +396,27 @@ object JdbcUtils extends Logging {
         case _: SQLException => None
       } finally {
         statement.close()
+      }
+    } catch {
+      case _: SQLException => None
+    }
+  }
+
+  /**
+   * Returns the primary key if the table already exists in the JDBC database.
+   */
+  def getPriKey(getConnection: () => Connection, table: String): Option[String] = {
+    val conn = getConnection()
+    val schema = conn.getSchema()
+    val catalog = conn.getCatalog()
+
+    try {
+      val meta = conn.getMetaData()
+      val data = meta.getPrimaryKeys(catalog, schema, table)
+      if (data.next()) {
+        Some(data.getString("COLUMN_NAME"))
+      } else {
+        throw new SQLException("Can not find primary key in current table")
       }
     } catch {
       case _: SQLException => None
@@ -952,88 +989,42 @@ object JdbcUtils extends Logging {
     val getConnection: () => Connection = createConnectionFactory(options)
     val batchSize = options.batchSize
     val isolationLevel = options.isolationLevel
+    val priKey = getPriKey(getConnection, table)
 
-    mode match {
-      case SaveMode.Overwrite =>
-        val insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-        val repartitionedDF = options.numPartitions match {
-          case Some(n) if n <= 0 => throw new IllegalArgumentException(
-            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
-              s"in table writing via JDBC. The minimum value is 1.")
-          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
-          case _ => df
-        }
-        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
-          getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
-          options)
-        }
-      case SaveMode.Ignore =>
-        val insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-        val repartitionedDF = options.numPartitions match {
-          case Some(n) if n <= 0 => throw new IllegalArgumentException(
-            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
-              s"in table writing via JDBC. The minimum value is 1.")
-          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
-          case _ => df
-        }
-        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
-          getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
-          options)
-        }
-      case SaveMode.Append =>
-        val insertStmt = getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-        val repartitionedDF = options.numPartitions match {
-          case Some(n) if n <= 0 => throw new IllegalArgumentException(
-            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
-              s"in table writing via JDBC. The minimum value is 1.")
-          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
-          case _ => df
-        }
-        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
-          getConnection, table, iterator, rddSchema, insertStmt, batchSize, dialect, isolationLevel,
-          options)
-        }
+    val stmt: String = mode match {
+      case SaveMode.Overwrite | SaveMode.Ignore | SaveMode.Append =>
+        getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
       case SaveMode.Delete =>
-        val deleteStmt = getDeleteStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
-        val repartitionedDF = options.numPartitions match {
-          case Some(n) if n <= 0 => throw new IllegalArgumentException(
-            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
-              s"in table writing via JDBC. The minimum value is 1.")
-          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
-          case _ => df
-        }
-        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
-          getConnection, table, iterator, rddSchema, deleteStmt, batchSize, dialect, isolationLevel,
-          options)
-        }
+        getDeleteStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
       case SaveMode.Update =>
-        val updateStmt = getUpdateStatement(
+        getUpdateStatement(
           table,
           rddSchema,
-          Seq(),
+          priKey,
           tableSchema,
           isCaseSensitive,
           dialect)
-        val repartitionedDF = options.numPartitions match {
-          case Some(n) if n <= 0 => throw new IllegalArgumentException(
-            s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
-              s"in table writing via JDBC. The minimum value is 1.")
-          case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
-          case _ => df
-        }
-        repartitionedDF.rdd.foreachPartition { iterator => savePartition(
-          getConnection, table, iterator, rddSchema, updateStmt, batchSize, dialect, isolationLevel,
-          options)
-        }
       case SaveMode.Upsert =>
-        val upsertStmt = getMergeStatement(
+        getMergeStatement(
           table,
           rddSchema,
-          Seq(),
+          priKey,
           tableSchema,
           isCaseSensitive,
           dialect)
-      case _ =>
+      case _ => ""
+    }
+    logWarning(s"generate sql: `${stmt}`")
+    val repartitionedDF = options.numPartitions match {
+      case Some(n) if n <= 0 => throw new IllegalArgumentException(
+        s"Invalid value `$n` for parameter `${JDBCOptions.JDBC_NUM_PARTITIONS}` " +
+          s"in table writing via JDBC. The minimum value is 1.")
+      case Some(n) if n < df.rdd.getNumPartitions => df.coalesce(n)
+      case _ => df
+    }
+    repartitionedDF.rdd.foreachPartition { iterator => savePartition(
+      getConnection, table, iterator, rddSchema, stmt, batchSize, dialect, isolationLevel,
+      options)
     }
   }
 
