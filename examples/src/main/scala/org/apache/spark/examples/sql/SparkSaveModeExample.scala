@@ -38,44 +38,22 @@ object SparkSaveModeExample {
     // $example on:init_session$
     val spark = SparkSession
       .builder()
-      .appName("Spark SQL basic example")
+      .appName("Spark SaveMode basic example")
       .config("spark.some.config.option", "some-value")
+      .config("spark.driver.extraClassPath", "../spark_env/postgresql-42.2.9.jar")
+      .config("spark.executor.extraClassPath", "../spark_env/postgresql-42.2.9.jar")
       .getOrCreate()
-
     // For implicit conversions like converting RDDs to DataFrames
     import spark.implicits._
     // $example off:init_session$
-
-    runSparkSaveModeAppendExample(spark)
+    runSparkSaveModeDeleteExample(spark)
+    runSparkSaveModeUpdateExample(spark)
+    clean(spark)
+    runSparkSaveModeUpsertExample(spark)
     spark.stop()
   }
 
-  private def runSparkSaveModeAppendExample(spark: SparkSession): Unit = {
-    val df = spark.read.json("examples/src/main/resources/people.json")
-    df.write
-      .format("jdbc")
-      .mode("append")
-      .option("driver", "org.postgresql.Driver")
-      .option("url", "jdbc:postgresql://localhost:5433/spark")
-      .option("dbtable", "people")
-      .option("user", "spark")
-      .option("password", "123456")
-      .save()
-  }
-
-  private def runSparkSaveModeUpdateExample(spark: SparkSession): Unit = {
-    val df = spark.read.json("examples/src/main/resources/people.json")
-    df.write
-      .format("jdbc")
-      .mode("update")
-      .option("url", "jdbc:postgresql://localhost:5433/spark")
-      .option("dbtable", "people")
-      .option("user", "spark")
-      .option("password", "123456")
-      .save()
-  }
-
-  private def runSparkSaveModeDeleteExample(spark: SparkSession): Unit = {
+  private def clean(spark: SparkSession): Unit = {
     val df = spark.read.json("examples/src/main/resources/people.json")
     df.write
       .format("jdbc")
@@ -85,6 +63,129 @@ object SparkSaveModeExample {
       .option("user", "spark")
       .option("password", "123456")
       .save()
+    val df2 = spark.read.json("examples/src/main/resources/people2.json")
+    df2.write
+      .format("jdbc")
+      .mode("delete")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+  }
+
+  private def runSparkSaveModeUpsertExample(spark: SparkSession): Unit = {
+    println("==========================Upsert Example===========================")
+    val jdbcDF = spark.read
+      .format("jdbc")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .load()
+    val df = spark.read.json("examples/src/main/resources/people.json")
+    println("datafram via jdbc")
+    jdbcDF.show()
+    println("dataframe via json")
+    df.show()
+    df.write
+      .format("jdbc")
+      .mode("append")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+    println("datafram via jdbc after insert")
+    jdbcDF.show()
+    val df2 = spark.read.json("examples/src/main/resources/people2.json")
+    println("dataframe via json to update")
+    df2.show()
+    df2.write
+      .format("jdbc")
+      .mode("upsert")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+    println("datafram via jdbc after upsert")
+    jdbcDF.show()
+  }
+
+  private def runSparkSaveModeUpdateExample(spark: SparkSession): Unit = {
+    println("==========================Update Example===========================")
+    val jdbcDF = spark.read
+      .format("jdbc")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .load()
+    val df = spark.read.json("examples/src/main/resources/people.json")
+    println("datafram via jdbc")
+    jdbcDF.show()
+    println("dataframe via json")
+    df.show()
+    df.write
+      .format("jdbc")
+      .mode("append")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+    println("datafram via jdbc after insert")
+    jdbcDF.show()
+    val df2 = spark.read.json("examples/src/main/resources/people2.json")
+    println("dataframe via json to update")
+    df2.show()
+    df2.write
+      .format("jdbc")
+      .mode("update")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+    println("datafram via jdbc after update")
+    jdbcDF.show()
+  }
+
+  private def runSparkSaveModeDeleteExample(spark: SparkSession): Unit = {
+    println("==========================Delete Example===========================")
+    val jdbcDF = spark.read
+      .format("jdbc")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .load()
+    val df = spark.read.json("examples/src/main/resources/people.json")
+    println("datafram via jdbc")
+    jdbcDF.show()
+    println("dataframe via json")
+    df.show()
+    df.write
+      .format("jdbc")
+      .mode("append")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+    println("datafram via jdbc")
+    jdbcDF.show()
+    df.write
+      .format("jdbc")
+      .mode("delete")
+      .option("url", "jdbc:postgresql://localhost:5433/spark")
+      .option("dbtable", "people")
+      .option("user", "spark")
+      .option("password", "123456")
+      .save()
+    println("datafram via jdbc afer delete")
+    jdbcDF.show()
   }
 
 }

@@ -386,10 +386,11 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
     }
 
     val command = mode match {
-      case SaveMode.Append | SaveMode.ErrorIfExists | SaveMode.Ignore =>
+      case SaveMode.Append | SaveMode.ErrorIfExists | SaveMode.Ignore  |
+        SaveMode.Delete | SaveMode.Update | SaveMode.Upsert =>
         AppendData.byPosition(table, df.logicalPlan, extraOptions.toMap)
 
-      case SaveMode.Overwrite | SaveMode.Delete | SaveMode.Update | SaveMode.Upsert =>
+      case SaveMode.Overwrite =>
         val conf = df.sparkSession.sessionState.conf
         val dynamicPartitionOverwrite = table.table.partitioning.size > 0 &&
           conf.partitionOverwriteMode == PartitionOverwriteMode.DYNAMIC
@@ -530,6 +531,15 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
         return saveAsTable(TableIdentifier(ident.name(), ident.namespace().headOption))
 
       case (SaveMode.Append, Some(table)) =>
+        AppendData.byName(DataSourceV2Relation.create(table), df.logicalPlan, extraOptions.toMap)
+
+      case (SaveMode.Delete, Some(table)) =>
+        AppendData.byName(DataSourceV2Relation.create(table), df.logicalPlan, extraOptions.toMap)
+
+      case (SaveMode.Update, Some(table)) =>
+        AppendData.byName(DataSourceV2Relation.create(table), df.logicalPlan, extraOptions.toMap)
+
+      case (SaveMode.Upsert, Some(table)) =>
         AppendData.byName(DataSourceV2Relation.create(table), df.logicalPlan, extraOptions.toMap)
 
       case (SaveMode.Overwrite, _) =>

@@ -174,7 +174,8 @@ object JdbcUtils extends Logging {
       rddSchema: StructType,
       tableSchema: Option[StructType],
       isCaseSensitive: Boolean,
-      dialect: JdbcDialect): SqlMsg = {
+      dialect: JdbcDialect,
+      dbType: String): SqlMsg = {
     val columns = if (tableSchema.isEmpty) {
       rddSchema.fields.map(x => dialect.quoteIdentifier(x.name) + "=?").mkString(" AND ")
     } else {
@@ -188,7 +189,13 @@ object JdbcUtils extends Logging {
         val normalizedName = tableColumnNames.find(f => columnNameEquality(f, col.name)).getOrElse {
           throw new AnalysisException(s"""Column "${col.name}" not found in schema $tableSchema""")
         }
-      dialect.quoteIdentifier(normalizedName) + "IS NOT DISTINCT FROM ?"
+      val result: String = dbType match {
+        case "MySQL" =>
+          dialect.quoteIdentifier(normalizedName) + "<=>?"
+        case "PostgreSQL" =>
+          dialect.quoteIdentifier(normalizedName) + "IS NOT DISTINCT FROM ?"
+      }
+      result
       }.mkString(" AND ")
     }
     var indexMap: Map[String, Seq[Int]] = Map()
@@ -222,7 +229,7 @@ object JdbcUtils extends Logging {
           org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
         } else {
           org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
-        }
+        }case 
         val tableColumnNames = tableSchema.get.fieldNames
         rddSchema.fields.map { col =>
           val normalizedName = tableColumnNames
@@ -255,7 +262,8 @@ object JdbcUtils extends Logging {
        priKey: Option[String],
        tableSchema: Option[StructType],
        isCaseSensitive: Boolean,
-       dialect: JdbcDialect): SqlMsg = {
+       dialect: JdbcDialect,
+       dbType: String): SqlMsg = {
     if (priKey.isEmpty) {
       throw new AnalysisException(s"""Primary key not found in table $table""")
     } else {
@@ -305,9 +313,17 @@ object JdbcUtils extends Logging {
       //   s"ON $priPart " +
       //   s"WHEN NOT MATCHED THEN INSERT ($columns) VALUES ($fullPart) " +
       //   s"WHEN MATCHED THEN UPDATE SET $nrmPart"
-      SqlMsg(s"INSERT INTO $table " +
-        s" ($columns) VALUES ($placeholders) ON CONFLICT (${priCol}) " +
-        s" DO UPDATE SET ${nrmCnditns}", indexMap)
+      val result: SqlMsg = dbType match {
+        case "MySQL" =>
+          SqlMsg(s"INSERT INTO $table " +
+            s" ($columns) VALUES ($placeholders) ON DUPLICATE KEY " +
+            s" UPDATE ${nrmCnditns} ", indexMap)
+        case "PostgreSQL" =>
+          SqlMsg(s"INSERT INTO $table " +
+            s" ($columns) VALUES ($placeholders) ON CONFLICT (${priCol}) " +
+            s" DO UPDATE SET ${nrmCnditns}", indexMap)
+      }
+      result
     }
   }
 
@@ -452,6 +468,12 @@ object JdbcUtils extends Logging {
     } catch {
       case _: SQLException => None
     }
+  }
+
+  def getDBType(getConnection: () => Connection): String = {
+    val conn = getConnection()
+    val metadata = conn.getMetaData()
+    metadata.getDatabaseProductName
   }
 
   /**
@@ -1030,12 +1052,13 @@ object JdbcUtils extends Logging {
     val batchSize = options.batchSize
     val isolationLevel = options.isolationLevel
     val priKey = getPriKey(getConnection, table)
+    val dbType = getDBType(getConnection)
 
     val sqlMsg: SqlMsg = mode match {
       case SaveMode.Overwrite | SaveMode.Ignore | SaveMode.Append =>
         getInsertStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
       case SaveMode.Delete =>
-        getDeleteStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect)
+        getDeleteStatement(table, rddSchema, tableSchema, isCaseSensitive, dialect, dbType)
       case SaveMode.Update =>
         getUpdateStatement(
           table,
@@ -1051,7 +1074,7 @@ object JdbcUtils extends Logging {
           priKey,
           tableSchema,
           isCaseSensitive,
-          dialect)
+          dialect, dbType)
       case _ => SqlMsg("", Map("" -> Seq()))
     }
     logWarning(s"generate sql: `${sqlMsg.stmt}`")
